@@ -1,0 +1,155 @@
+// ==UserScript==
+// @name         Fuck-Yudao
+// @namespace    none
+// @version      1.0
+// @license      MIT
+// @description  Remove the VIP popup and restore blocked doc content on doc.iocoder.cn
+// @author       xiuzhen(fixed from The love you care )
+// @match        *://*.iocoder.cn/*
+// @grant        unsafeWindow
+// @run-at       document-start
+// ==/UserScript==
+
+(function () {
+    'use strict';
+
+    const LOG = true;
+    const log = (...a) => { if (LOG) console.log('[Fuck-Yudao]', ...a); };
+
+    log('script start');
+
+    // ============================================================
+    // 1. 废掉 jqueryAlert
+    // ============================================================
+    try {
+        unsafeWindow.jqueryAlert = function () {
+            var d = {};
+            d.show = function () {};
+            d.init = function () {};
+            d.close = function () {};
+            return d;
+        };
+    } catch (e) {}
+
+    // ============================================================
+    // 2. 清理 .alert-container 弹窗
+    // ============================================================
+    function killPopup() {
+        let removed = false;
+        document.querySelectorAll('.alert-container').forEach(el => { el.remove(); removed = true; });
+        document.querySelectorAll('.alert-btn-box').forEach(el => { el.remove(); removed = true; });
+        ['.alert-mask', '.alert-overlay', '.v-modal', '.modal-mask'].forEach(sel => {
+            document.querySelectorAll(sel).forEach(el => { el.remove(); removed = true; });
+        });
+        if (document.body) {
+            document.body.style.overflow = '';
+            document.body.style.position = '';
+        }
+        if (document.documentElement) {
+            document.documentElement.style.overflow = '';
+        }
+        if (removed) log('popup removed');
+    }
+
+    // ============================================================
+    // 3. 内容恢复
+    // ============================================================
+    let goodContent = null;   // 缓存的正常内容
+    let cachedPath = null;    // 缓存对应的路径
+    let prevPath = location.pathname;
+
+    const blockPathList = [
+        "/bpm/", "/user-center/", "/social-user/", "/oauth2/", "/saas-tenant/", "/sms/",
+        "/mail/", "/notify/", "/mybatis-pro/", "/dynamic-datasource/", "/report/",
+        "/Spring-Boot", "/Spring-Cloud", "/api-doc/", "/module-new/", "/new-feature/",
+        "/dev-hot-swap/", "/file/", "/message-queue/", "/job/", "/idempotent/",
+        "/distributed-lock/", "/rate-limiter/", "/http-sign/", "/project-rename/",
+        "/delete-code/", "/resource-permission/", "/data-permission/", "/deployment-linux/",
+        "/deployment-docker/", "/deployment-baota", "/registry-center/", "/config-center/",
+        "/rpc/", "/gateway/", "/distributed-transaction/", "/server-protection/",
+        "/cloud-debug/", "/mp/", "/mall/", "/pay/", "/crm/", "/member/", "/erp/",
+        "/ai/", "/websocket/", "/vo/", "/system-log/"
+    ];
+
+    const isBlocked = () => blockPathList.some(p => location.pathname.includes(p));
+
+    const getWrapper = () =>
+        document.querySelector('.content-wrapper') ||
+        document.querySelector('.theme-default-content') ||
+        document.querySelector('.page') ||
+        document.querySelector('main');
+
+    // 判断当前内容是不是 VIP 提示
+    function isVipContent(html) {
+        return html && (html.includes('仅 VIP 可见') || html.includes('加入知识星球'));
+    }
+
+    // 尝试缓存正常内容
+    function tryCache() {
+        const w = getWrapper();
+        if (!w) return;
+        const html = w.innerHTML;
+        if (!isVipContent(html) && html.trim().length > 100) {
+            if (goodContent !== html) {
+                goodContent = html;
+                cachedPath = location.pathname;
+                log('content cached, length =', html.length);
+            }
+        }
+    }
+
+    // 尝试恢复
+    function tryRestore() {
+        const w = getWrapper();
+        if (!w) return;
+        if (isVipContent(w.innerHTML) && goodContent && cachedPath === location.pathname) {
+            // 防止死循环，最多写 5 次
+            let n = 0;
+            while (isVipContent(w.innerHTML) && n < 5) {
+                w.innerHTML = goodContent;
+                n++;
+            }
+            log('content restored');
+        }
+    }
+
+    // ============================================================
+    // 4. 主循环：高频轮询，缓存 + 恢复
+    // ============================================================
+    function tick() {
+        killPopup();
+        tryCache();
+        tryRestore();
+
+        // 路由变化时清空缓存
+        if (prevPath !== location.pathname) {
+            prevPath = location.pathname;
+            goodContent = null;
+            cachedPath = null;
+            log('route changed ->', prevPath);
+        }
+    }
+
+    // 高频轮询（每 150ms 一次），覆盖弹窗和内容替换
+    setInterval(tick, 150);
+
+    // MutationObserver 兜底，DOM 一变就处理
+    const mo = new MutationObserver(tick);
+    function startMo() {
+        mo.observe(document.documentElement, {
+            childList: true,
+            subtree: true,
+            characterData: true
+        });
+    }
+
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', () => {
+            startMo();
+            tick();
+        });
+    } else {
+        startMo();
+        tick();
+    }
+})();
